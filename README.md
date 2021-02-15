@@ -1,12 +1,11 @@
 # PSU-USP521-AppDemoMethodsII
-**[Methods for Projecting Persons Per Household (PPH)](https://a-brasch.github.io/PSU-USP522-Practicum/)**    
+**[Methods for Projecting Persons Per Household (PPH)](http://web.pdx.edu/~abrasch/USP521/)**    
 Portland State University  
 Graduate Certificate in Applied Social Demography  
 USP 521 Applied Demographic Methods II Independent Study  
 Summer Quarter 2019
 
 [GitHub repository: PSU-USP521-AppDemoMethodsII](https://github.com/a-brasch/PSU-USP521-AppDemoMethodsII "GitHub repository: PSU-USP521-AppDemoMethodsII")  
-[PSU webspace: USP 521](http://web.pdx.edu/~abrasch/USP521/ "PSU webspace: USP 521")  
 
 ---
 
