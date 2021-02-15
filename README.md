@@ -1,6 +1,5 @@
 # PSU-USP521-AppDemoMethodsII
-PSU USP 521 Applied Demographic Methods II Independent Study  
-Methods for Projecting Persons Per Household (PPH)  
+**[Methods for Projecting Persons Per Household (PPH)](https://a-brasch.github.io/PSU-USP522-Practicum/)**    
 Portland State University  
 Graduate Certificate in Applied Social Demography  
 USP 521 Applied Demographic Methods II Independent Study  
