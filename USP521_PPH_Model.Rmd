@@ -1,0 +1,874 @@
+---
+title: "Methods for Projecting Persons Per Household (PPH)"
+author: "Alex Brasch - USP 521 Demographic Methods II Independent Study"
+date: "9/16/2019 - Summer Quarter 2019"
+output:
+  pdf_document:
+    toc: yes
+    toc_depth: '3'
+  word_document:
+    toc: yes
+    toc_depth: '3'
+  html_document:
+    code_folding: hide
+    highlight: zenburn
+    self_contained: yes
+    theme: darkly
+    toc: yes
+    toc_depth: 3
+    toc_float:
+      collapsed: no
+      toc_float: yes
+editor_options:
+  chunk_output_type: console
+---
+
+```{css, echo = FALSE}
+  pre:not([class]) {
+    color: #333333;
+    background-color: #cccccc;
+  }
+```
+
+```{r setup, echo=FALSE, warning=FALSE, error=FALSE, results='hide', message=FALSE}
+knitr::opts_chunk$set(echo = TRUE, fig.width = 9, fig.height = 7)
+```
+
+```{r echo=FALSE, warning=FALSE, error=FALSE, results='hide', message=FALSE}
+# Require the pacman package to easily load all necessary packages
+if(!require(pacman)){install.packages("pacman");library(pacman)}
+suppressPackageStartupMessages(p_load(
+  tidycensus,
+  sf,
+  tidyverse,
+  rgdal,
+  tigris,
+  survey,
+  data.table,
+  srvyr,
+  rio,
+  jtools,
+  mapview,
+  leaflet,
+  janitor,
+  xlsx,
+  car,
+  GGally))
+
+# Set options
+options(tigris_class = "sf", tigris_use_cache = F) # Return an object of class sf via tigris; do not cache Census shapefile downloads
+options(stringsAsFactors = F) # R often uses a concept of factors to re-encode strings. This can be too early and too aggressive. Sometimes a string is just a string. To avoid problems delay re-encoding of strings by using stringsAsFactors = FALSE when creating data.frames.
+options(dplyr.width = Inf) # In response to “Variables not shown” in dplyr; overrides the width of columns that gets printed out (i.e., to display all columns from df)
+options(survey.replicates.mse = T) # options("survey.replicates.mse") controls the default in svrepdesign and as.svrepdesign for computing variances. When options("survey.replicates.mse") is TRUE, the default is to create replicate weight designs that compute variances centered at the point estimate, rather than at the mean of the replicates.
+options(scipen = 999) # 'scipen': integer. A penalty to be applied when deciding to print numeric values in fixed or exponential notation. Positive values bias towards fixed and negative towards scientific notation: fixed notation will be preferred unless it is more than 'scipen' digits wider.
+options(datatable.fread.datatable=F) # Similar to read.table but faster and more convenient. All controls such as sep, colClasses and nrows are automatically detected. bit64::integer64 types are also detected and read directly without needing to read as character before converting.
+```
+
+# Introduction
+
+  The Population Research Center (PRC) Oregon Population Forecast Program (OPFP) prepares population forecasts for all Oregon counties and cities (except for the Portland Metro Area) using a consistent suite of demographic methods. For counties and larger sub‐areas—those with populations greater than 8,000—OPFP uses a cohort‐component model, which measures demographic life events, such as births, deaths, and migrations over time, to forecast future populations. For each smaller sub‐area, OPFP utilizes the housing unit (HU) method, which forecasts future population based on changes in housing stock, type, occupancy, and persons per household (PPH) (Population Research Center 2019, 4). The HU method is recognized as one of the most commonly used methods of projecting small-area populations. The method has been used widely and consistently for decades. A 1978 study conducted by the U.S. Census Bureau showed that more than three-fourths of all agencies making sub-state population estimates use some form of the HU method (Smith and Mandell 1984, 282), and more recently, it has been advocated before Congress for use by the Census Bureau for sub-county population estimates (Swanson 2006 in Hauer, Evans, and Alexander 2015, 47). The HU method's frequent use is no surprise, since it is often regarded as one of the most reliable methods for making population estimates for small areas (Hoque 2012, 93). It's proven performance is due, in part, to the HU method's ease of use—in that the population of any given geographic area is simply equal to the number of occupied housing units (households) multiplied by PPH, plus the population residing in group quarters (e.g., nursing homes, military bases university dormitories, prison, etc.).
+
+  However, one of the challenges to producing accurate forecasts for small areas using the HU method is quantifying the impact of local and regional demographic factors on average household size (i.e., PPH) and occupancy rates. In many applications of the HU method, PPH is adopted from the most recent census. While this technique provides relatively accurate estimates when the forecast horizon is close to the previous census, it becomes increasingly unreliable as the projection period is farther removed from the previous census. Another common method of estimating PPH is linear extrapolation of the trend between the two most recent censuses. This technique will produce accurate estimates when PPH follows a stable trend, but it will become increasingly inaccurate as trends change. For instance, in the U.S., PPH declined by 1.2% between 1950 and 1960, by 5.7% between 1960 and 1970, and by 12.1% between 1970 and 1980 (U.S. Bureau of the Census 1983c). This increased rate of decline would not be captured by simple extrapolation of intercensal PPH trends and would result in inaccurate projection for many places (in Smith 1986, 290). Neither of these techniques is likely to produce accurate measures of PPH when demographic trends are changing trajectory or are changing at different rates across time and geography.
+
+  The reliance of the HU method on simple, projected housing trends and generalized rates presents clear limitations on producing accurate populations for small areas. To better understand the effect of PPH and occupancy rates on population forecasts prepared using the HU method, this study investigates a variety of indicators, including headship rates, dependency ratios, changes in age structure, and total fertility rates (TFR). Generally, fewer children and more elderly persons suggest a decline of PPH and occupancy rates over time. In fact, declining fertility may be the most important immediate driver of changing household sizes (Bongaarts 2001 in Bradbury, Peterson, and Liu 2014, 80). Furthermore, aging of a population is likely to contribute to the decline of PPH, even in areas where fertility rates are stable, because households headed by the elderly typically have fewer occupants.
+
+  In an attempt to better capture demographic change, this study investigates the use of regression analysis to estimate PPH. One of the underlying goals of this research is an attempt to reduce the impact of an inherent quality of forecasting—that each step of the estimation process requires decision-making that commonly must be based on sketchy information or on intuition (Starsinic and Zitter 1968, 476)—by better quantifying the influence of demographic change. The study is divided into four main components, including 1) a review of relevant literature on the topic, 2) data acquisition and preparation for the area of interest (i.e., State of Oregon), 3) descriptive and inferential (regression) statistics and development of a conceptual framework for a prediction model to forecast PPH, and 4) a discussion of results, limitations, future research opportunities, and conclusions.
+
+  The above was accomplished by undertaking a review of academic research on the topic, as well as through the use of analytical methods to measure the impact of demographic variables on PPH over time. For analysis and reporting purposes, the project utilizes the R programming language and environment (RStudio), R Markdown, U.S. Census American Community Survey API, tidyverse packages (e.g., dplyr), and additional R packages (e.g., tidycensus). The geographic units of analysis are the 2018 Urban Growth Boundaries (UGB) of Oregon incorporated areas. The 1990-2000 and 2000-2010 decades serve as the base periods of analysis, with 2010 representing the launch year, and the forecast horizon extending to 2030. Although 5-year age cohorts are standard within demographic analysis, especially when conducting historical analyses, this study will also employ 10-year cohorts and broader age group categories like 0-17, 18-65, and 65+, in order to better suit existing forecast methods and available data. The results of this study are intended to provide the PRC OPFP with methods to project PPH based on statistical relationships, as well as a digestible means of communicating to county and city stakeholders and the general public how aging, household formation, and declining fertility impact population forecasts. The end product, as follows, consists of a research paper produced with R Markdown, including relevant code chunks and data visualizations.
+
+# Literature Review
+
+  Through criticism and praise, the housing unit (HU) method remains an important approach to generating small-area population estimates and forecasts. Many of the advantages and disadvantages of the HU method have been well-documented; however, recent scholarship on improving estimates and projections of the key variables—number of housing units, occupancy rate, and persons per household (PPH)—has languished. Exceptions include research on the employment of remote sensing and GIS (Deng, Wu, and Wang 2010), regression models (Smith, Nogle, and Cody 2002; Kimpel and Lowe 2007), and American Community Survey (ACS) sample data (Swanson and Hough 2012) to improve estimates of PPH. The following is a review of relevant literature on the topic, including historic trends of average household size, traditional methods of estimation, and research into innovative methods to improve forecasting. 
+
+  As with other demographic factors, PPH does not typically vary drastically from year-to-year, but rather follows longer-term trajectories of change, trending consistently in one direction or another. Nationwide, PPH has been in steady decline in the United States. As noted by Smith and colleagues, this long-term trend has been witnessed over the past two centuries with PPH declining from 5.8 in 1790 to 4.8 in 1900 and 2.6 in 2000 (2002, 699). Two of the most likely reasons include declining birth rates and the tendency for adults to head separate households (Deng, Wu, and Wang 2010, 5675). Aging provides another explanation for why average household sizes have continued to decline rapidly even in countries where fertility rates have been stable for decades. Based on data from the United Nations (U.N. Population Division 2005), households with an elderly resident had on average 1.3–3.9 fewer people than those without an elderly resident in 2000 (Bradbury, Peterson, and Liu 2014, 80). Moreover, increasing life expectancy increases the proportion of the population living in households headed by the elderly, a category whose household size is small relative to the rest of the population (Jiang and O’Neill 2007, 581). The long-term trend of decline does not, however, imply that considerable variation in PPH over time and across space is absent from the demographic landscape.
+
+  At the state level, studies have shown that PPH values have deviated from the nationwide trend of steady decline. The Washington Office of Financial Management (OFM) found that the average household size in Washington State remained largely constant from the mid-1990s to mid-2000s—a departure from the downward trend of the previous two decades that coincided with the nationwide trajectory (Kimpel and Lowe 2007, 1-2). Differences in PPH values across states and counties have generally become smaller over time, but substantial differences remain. For any given state, the largest county PPH values are often 30-50% higher than the smallest values (Smith, Nogle, and Cody 2002, 699). For instance, an example from Washington State displays how the demographic composition of local populations influence PPH values and create variation across sub-state regions. The OFM found that the growing Hispanic/Latino populations in Eastern Washington in the 1990s contributed to the increase of county PPH values, whereas counties in the Northwest and Northeast portions of the state with growing retirement age populations experienced declines (Kimpel and Lowe 2007, 1-2). Increasing migration from rural to urban areas and the unknown impacts of climate change's influence on migration could also cause more heterogeneity of PPS across states and regions. This diversity of PPH is extremely important to demographers, population geographers, and practitioners since relatively small changes in PPH can generate large changes in population estimates and forecasts produced by the HU method (Swanson and Hough 2012, 241).
+
+  The predominant methods for estimating PPH include 1) applying the PPH value observed in the most recent census, 2) extrapolation (linear, geometric, or exponential) of the trend in PPH between the two most recent censuses, and 3) extrapolation with the addition of postcensal data. Examples of ancillary, postcensal data include the proportional change of PPH since the most recent census at national, statewide or regional levels, or the change of the mixture of occupied housing (i.e. single-family, multifamily, and mobile home residences). Numerous studies have shown that the first technique provides relatively accurate estimates when the forecast horizon years are near the previous census year, but it becomes increasingly unreliable when further removed from the last census. The extrapolation techniques typically produce accurate estimates when PPH follows a stable trend in large geographic areas, but their reliability falters when trends change course. As summed up by Smith and Lewis, none of these techniques is likely to be very accurate when PPH trends are changing rapidly (1980, 327). Similarly, these techniques may not be as reliable in geographically small areas, which are more sensitive to change in fertility, aging, and migration patterns.
+
+  In response to these shortcomings, recent research has focused on two main areas of potential improvement, including the incorporation of small-area sample data from the ACS and regression models. For instance, in a 2012 study, Swanson and Hough tested the utility of 1-year ACS data, in hopes of leveraging the annual survey data and forgoing reliance on decennial censuses. Unfortunately, they found that the resulting PPH estimates presented too much variation from year-to-year—contradicting the steady rates of change that have been historically observed—and concluded that for the period between 2001 and 2009, the PPH estimates resulting from extrapolation performed better in comparison with the interpolated PPH estimates than the annual ACS PPH estimates (Swanson and Hough 2012, 253-254). Subsequent studies on the use of ACS have bolstered Swanson and Hough finding's that the nature of the ACS survey, including the presence of sampling and non-sampling error, leads to volatility in the PPH estimates that is inconsistent with demographic theory (Cai and Tippett 2014, 91). The second, and potentially more promising avenue of research, is building upon the multiple regression analyses explored by Smith, Nogle, and Cody (2002); Kimpel and Lowe (2007); and Deng, Wu, and Wang (2010).
+
+  Regression analysis provides a means of incorporating local geographic, demographic, and housing information that may improve PPH estimates and forecasts for small-areas. Geographic variables range from distances to different land uses—such as recreation centers, schools, and commercial areas—to transportation networks and proximity to public transit options. As pointed out by Deng and Wu, these geographical variables may be significant to reflecting behavioral preferences and demographic characteristics of different households (2013, 1130). Demographic variables include characteristics of the population like age structure, total fertility rate, race/ethnicity, and educational attainment, while housing characteristics include home value, the number of bedrooms and bathrooms, and lot area. Furthermore, the ACS and many practitioners of the HU method distinguish among different types of housing structures—commonly categorized as single-family, multifamily, and mobile home units. The proportions of these housing types for a given area may also influence average household size. Considering all these variables potential contribution to PPH, it's important to factor in data availability when choosing independent variables for analysis. For instance, Smith, Nogle, and Cody chose independent variables that are readily-available in most U.S. counties and for small geographic areas, including births per household, school enrollees in grades K–12 per household, and Medicare enrollees age 65 and older per household (2002, 699-700). Similarly, for a 2007 study, the Washington State OFM focused on variables available from state or federal sources of demographic data, such as county births, change in racial/ethnic proportions of a population, and change of population age structure (Kimpel and Lowe 2007, 4).
+
+  The three studies referenced above reviewed PPH values estimated using regression in comparison with traditional techniques, finding generally positive results. For instance, Deng and Wu determined that comparisons of the PPH estimates and the actual PPH number indicated that the spatial patterns of the regression-based estimates matched those of the actual PPH values reasonably well (2013, 1132). Results of the aforementioned study indicated that percentages of the youth under age seventeen, distance to commercial land use, and PPH from the most recent census were the only significant variables tested (Deng and Wu 2013, 1132). Similarly, regression models performed well within Smith and Cody's 2013 study, in which the authors noted that regression techniques may be particularly useful when PPH values are changing rapidly because they are based on variables that incorporate the impact of changes over time (Smith and Cody 2013, 26). Washington State OFM found that relative to the actual value of PPH in 2000, 92.3 percent of counties had a prediction error within +/- 5 percent (Kimpel and Lowe 2007, 4). Kimpel and Lowe noted that three explanatory variables were particularly significant (at the 95 percent level of confidence): the change in births 14 years prior to the prediction date, change in Hispanic population, and change in persons 65 and over (2007, 4). Based on the analysis performed by Smith, Nogle, and Cody, one of the most important benefits of regression-based PPH estimates is their ability to reduce the large errors that are often produced by traditional methods in places that are undergoing substantial changes in demographic composition (2002, 710). The results of previous research demonstrate the potential of regression analysis to better estimate and forecast PPH for use within the HU method. 
+
+# Methodology
+
+As part of its HU method, the OPFP uses decennial census data to calculate occupancy rates and PPH for various forecast horizons. The OPFP also considers recent estimates from the ACS, but does not rely on the sample data due to its unreliability, especially for areas with small populations (Population Research Center 2019, 7). Rather than simply adopting PPH values from the most recent census, in most areas, OPFP practitioners produce an estimate using log-linear extrapolation based on local (UGB) trends, considering such factors as births by race and ethnicity, changes in school enrollment, fertility rates, and the age structure of the population (Population Research Center 2019, 7-8). The resulting estimates are revised based on the age-specific headship rates & future population age distributions that are projected using a Cohort Change Ratio (CCR) model. On some occasions, the OPFP accounts for the change in tenure and structure type of housing in local areas, but only if there are significant changes. For example, the occupancy rates and PPH for Boardman, Oregon were adjusted due to local planner input on the upcoming addition of a 250-unit multifamily complex into the city's predominantly single-family housing stock (personal communication with Nick Chun, OPFP Coordinator, PRC, Portland State University, 2019). In areas where the variables have fluctuated over time, the OPFP occasionally employs the average occupancy rates and PPH from the prior two decennial censuses (Population Research Center 2019, 8).
+
+The aim of this research is to extend current OPFP methods by investigating the usefulness of a regression-based approach to estimating PPH. In order to evaluate the results of the regression analysis, this research also prescribes to the current OPFP methods by constructing a CCR model to estimate headship rates, future population age distributions, and PPH. This study uses the R programming language and environment (RStudio), U.S. Census ACS API, tidyverse packages (e.g., dplyr), and additional R packages (e.g., tidycensus) to acquire and prepare the necessary data for analysis and reporting. The geographic units of analysis are the 2018 Urban Growth Boundaries (UGB) of Oregon incorporated areas. Census block data serves as the base unit for which population and housing data is collected. The block data is then allocated and aggregated to the UGBs. This UGB-level data is also aggregated to Oregon statewide values for use within the CCR and regression models. The 1990-2000 and 2000-2010 decades serve as the base periods of analysis, with 2010 representing the launch year, and the forecast horizon extending to 2030, with particular attention paid to the 2020 forecast year. Although 5-year age cohorts are standard within demographic analysis, especially when conducting historical analyses, this study will also employ 10-year cohorts and broader age group categories like 0-17, 18-65, and 65+, in order to better suit existing forecast methods and available data. A full list of necessary population and housing variables is included in the code chunks below; key data include age-specific population by 5-year age groups, household population, group quarters population, housing units, and age-specific householder counts by 10-year age groups.
+
+## Data Wrangling
+
+The following section contains all the necessary steps to prepare the population and housing data for analysis within the regression and CCR models. Steps include retrieving, munging, enriching, reshaping, and blending the 1990, 2000, and 2010 U.S. Census block data. To save on processing time and avoid local memory limitations, data-intensive code chunks have been commented out (e.g. retrieving all Oregon census blocks using the `tidycensus` and `tigris` packages). Readers can view the underlying code while the input data is read-in as part of the R Project's local data.
+
+### 2010 Census Blocks
+
+Review the 2010 decennial census variables and define those necessary for analysis.
+
+```{r}
+# Load the 2010 census variables
+DC2010_sf1 <- load_variables(2010, "sf1", cache = TRUE)
+# View(DC2010_sf1)
+
+# One-time export as Excel file
+# write.xlsx(DC2010_sf1, "./Data/DC2010_sf1.xlsx")
+
+# Create a vector of 2010 decennial census variables
+DC2010_sf1_var <- c(
+  tot_pop = 'P001001', # Total, TOTAL POPULATION
+  hh_pop = 'H011001', # Total, Total population in occupied housing units
+  gq_pop = 'P042001', # Total, GROUP QUARTERS POPULATION BY GROUP QUARTERS TYPE
+  tot_hu = 'H001001', # Total, HOUSING UNITS
+  hu_occ = 'H003002', # Total!!Occupied, OCCUPANCY STATUS
+  hu_vac = 'H003003', # Total!!Vacant, OCCUPANCY STATUS
+  avg_hh= 'H012001', # Average household size!!Total, AVERAGE HOUSEHOLD SIZE OF OCCUPIED HOUSING UNITS BY TENURE
+  m_tot = 'P012002', # Total!!Male, SEX BY AGE
+  m_00_04 = 'P012003', # Total!!Male!!Under 5 years, SEX BY AGE
+  m_05_09 = 'P012004',
+  m_10_14 = 'P012005',
+  m_15_17 = 'P012006',
+  m_18_19 = 'P012007',
+  m_20 = 'P012008',
+  m_21 = 'P012009',
+  m_22_24 = 'P012010',
+  m_25_29 = 'P012011',
+  m_30_34 = 'P012012',
+  m_35_39 = 'P012013',
+  m_40_44 = 'P012014',
+  m_45_49 = 'P012015',
+  m_50_54 = 'P012016',
+  m_55_59 = 'P012017',
+  m_60_61 = 'P012018',
+  m_62_64 = 'P012019',
+  m_65_66 = 'P012020',
+  m_67_69 = 'P012021',
+  m_70_74 = 'P012022',
+  m_75_79 = 'P012023',
+  m_80_84 = 'P012024',
+  m_85_plus = 'P012025',
+  f_tot = 'P012026', # Total!!Female, SEX BY AGE
+  f_00_04 = 'P012027', # Total!!Female!!Under 5 years, SEX BY AGE
+  f_05_09 = 'P012028',
+  f_10_14 = 'P012029',
+  f_15_17 = 'P012030',
+  f_18_19 ='P012031',
+  f_20 = 'P012032',
+  f_21 = 'P012033',
+  f_22_24 = 'P012034',
+  f_25_29 = 'P012035',
+  f_30_34 = 'P012036',
+  f_35_39 = 'P012037',
+  f_40_44 = 'P012038',
+  f_45_49 = 'P012039',
+  f_50_54 = 'P012040',
+  f_55_59 = 'P012041',
+  f_60_61 = 'P012042',
+  f_62_64 = 'P012043',
+  f_65_66 = 'P012044',
+  f_67_69 = 'P012045',
+  f_70_74 = 'P012046',
+  f_75_79 = 'P012047',
+  f_80_84 = 'P012048',
+  f_85_plus = 'P012049',
+  HHer_Oocc_tot = 'H017002', # Total!!Owner occupied, TENURE BY AGE OF HOUSEHOLDER
+  HHer_Oocc_15_24 = 'H017003', # Total!!Owner occupied!!Householder 15 to 24 years, TENURE BY AGE OF HOUSEHOLDER
+  HHer_Oocc_25_34 = 'H017004',
+  HHer_Oocc_35_44 = 'H017005',
+  HHer_Oocc_45_54 = 'H017006',
+  HHer_Oocc_55_59 = 'H017007',
+  HHer_Oocc_60_64 =  'H017008',
+  HHer_Oocc_65_74 = 'H017009',
+  HHer_Oocc_75_84 = 'H017010',
+  HHer_Oocc_85_plus = 'H017011',
+  HHer_Rocc_tot = 'H017012', # Total!!Renter occupied, TENURE BY AGE OF HOUSEHOLDER
+  HHer_Rocc_15_24 = 'H017013', # Total!!Renter occupied!!Householder 15 to 24 years, TENURE BY AGE OF HOUSEHOLDER
+  HHer_Rocc_25_34 = 'H017014',
+  HHer_Rocc_35_44 = 'H017015',
+  HHer_Rocc_45_54 = 'H017016',
+  HHer_Rocc_55_59 = 'H017017',
+  HHer_Rocc_60_64 = 'H017018',
+  HHer_Rocc_65_74 = 'H017019',
+  HHer_Rocc_75_84 = 'H017020',
+  HHer_Rocc_85_plus = 'H017021'
+  )
+```
+
+Retrieve defined variables for all Oregon census blocks in wide format via the `tidycensus` package.
+
+```{r class.source = 'fold-show'}
+# Create a vector of Oregon County FIPS codes
+county_vector <- tidycensus::fips_codes %>%
+  filter(state_name == "Oregon") %>% 
+  select(county_code)
+
+# Retrieve non-spatial data
+# block2010_attributes <- tidycensus::get_decennial(
+  # geography = 'block', # Retrieve block level data
+  # variables = DC2010_sf1_var, # Portion of all necessary variables
+  # state = 'OR', # Specify Oregon
+  # county = county_vector$county_code,
+  # year = 2010, # Specify decennial census year
+  # geometry = F, # Include spatial geometry
+  # output = 'wide', # Set to standard output (a single row for each observation/polygon)
+  # cache_table = T # Cache the table so it can be called quicker in the future 
+  # )
+
+# Remove duplicate fields
+# block2010_attributes <- select(block2010_attributes,-c(NAME1,GEOID1))
+
+# Export as an RDS file
+# saveRDS(block2010_attributes,"./Data/block2010_attributes.rds")
+
+# Read in the "block2010_attributes" RDS dataset already retrieved via `tidycensus`
+block2010_attributes <- readRDS("./Data/block2010_attributes.rds")
+```
+
+Retrieve shapes for all Oregon census blocks via the `tigris` package.
+
+```{r warning=FALSE, message=FALSE, results='hide', class.source = 'fold-show'}
+# gc() # A call of gc causes a garbage collection to take place. The primary purpose of calling gc is for the report on memory usage. Use this before and after a data-heavy processing task.
+
+# Retrieve 2010 block shapes.
+#By default `tigris` retrieves the most recent vintage of a dataset; for statistical areas that largely go unchanged in intercensal periods, this is the last decennial census.
+# block2010_shp <- tigris::blocks("OR")
+
+# gc()
+
+# Export as an RDS file
+# saveRDS(block2010_shp,"./Data/block2010_shp.rds")
+
+# Read in the "block2010_shp.rds" RDS dataset already retrieved via `tigris`
+block2010_shp <- readRDS("./Data/block2010_shp.rds")
+```
+
+Join the blocks' attribute data to the shapes and coerce into an SF object (i.e simple features / spatial vector data).
+
+```{r}
+# Left join (i.e. all shape observations maintained, including those without attributes) based on GEOIDs
+block2010 <- block2010_shp %>%
+  select(GEOID=GEOID10) %>% 
+  left_join(block2010_attributes, by = "GEOID") %>%
+  st_as_sf()
+```
+
+Calculate new variables, such as 5-year cohorts and larger age groups (e.g., age 0-17).
+
+```{r class.source = 'fold-show'}
+# Calculate new age group by sex variables
+block2010$m_15_19 <- (block2010$m_15_17 + block2010$m_18_19)
+block2010$m_20_24 <- (block2010$m_20 + block2010$m_21 + block2010$m_22_24)
+block2010$m_60_64 <- (block2010$m_60_61 + block2010$m_62_64)
+block2010$m_65_69 <- (block2010$m_65_66 + block2010$m_67_69)
+
+block2010$f_15_19 <- (block2010$f_15_17 + block2010$f_18_19)
+block2010$f_20_24 <- (block2010$f_20 + block2010$f_21 + block2010$f_22_24)
+block2010$f_60_64 <- (block2010$f_60_61 + block2010$f_62_64)
+block2010$f_65_69 <- (block2010$f_65_66 + block2010$f_67_69)
+
+# Calculate new age group variables
+block2010$tot_00_17 <- (block2010$m_00_04 + block2010$m_05_09 + block2010$m_10_14 + block2010$m_15_17 + block2010$f_00_04 + block2010$f_05_09 + block2010$f_10_14 + block2010$f_15_17)
+
+block2010$tot_18_64 <- (block2010$m_18_19 + block2010$m_20_24 + block2010$m_25_29 + block2010$m_30_34 + block2010$m_35_39 + block2010$m_40_44 + block2010$m_45_49 + block2010$m_50_54 + block2010$m_55_59 + block2010$m_60_64 + block2010$f_18_19 + block2010$f_20_24 + block2010$f_25_29 + block2010$f_30_34 + block2010$f_35_39 + block2010$f_40_44 + block2010$f_45_49 + block2010$f_50_54 + block2010$f_55_59 + block2010$f_60_64)
+
+block2010$tot_65_plus <- (block2010$m_65_69 + block2010$m_70_74 + block2010$m_75_79 + block2010$m_80_84 + block2010$m_85_plus + block2010$f_65_69 + block2010$f_70_74 + block2010$f_75_79 + block2010$f_80_84 + block2010$f_85_plus)
+
+# Calculate combined owner/renter householder variables using base `R`
+# block2010$HHer_tot <- (block2010$HHer_Oocc_tot + block2010$HHer_Rocc_tot)
+# block2010$HHer_15_24 <- (block2010$HHer_Oocc_15_24 + block2010$HHer_Rocc_15_24)
+# block2010$HHer_25_34 <- (block2010$HHer_Oocc_25_34 + block2010$HHer_Rocc_25_34)
+# block2010$HHer_35_44 <- (block2010$HHer_Oocc_35_44 + block2010$HHer_Rocc_35_44)
+# block2010$HHer_45_54 <- (block2010$HHer_Oocc_45_54 + block2010$HHer_Rocc_45_54)
+# block2010$HHer_55_59 <- (block2010$HHer_Oocc_55_59 + block2010$HHer_Rocc_55_59)
+# block2010$HHer_60_64 <- (block2010$HHer_Oocc_60_64 + block2010$HHer_Rocc_60_64)
+# block2010$HHer_65_74 <- (block2010$HHer_Oocc_65_74 + block2010$HHer_Rocc_65_74)
+# block2010$HHer_75_84 <- (block2010$HHer_Oocc_75_84 + block2010$HHer_Rocc_75_84)
+# block2010$HHer_85_plus <- (block2010$HHer_Oocc_85_plus + block2010$HHer_Rocc_85_plus)
+
+# Combine (sum) the Owner and Renter occupied householder variables
+block2010_long_HHer <- block2010 %>% st_set_geometry(NULL) %>% # Remove the shape geometry
+  select(GEOID, contains("HHer")) %>% # Select all the householder variables
+  gather(variable,est,2:length(.)) %>% # Reshape from wide to long form by creating key-value pairs for all variables
+  mutate(variable=str_replace(variable,"Rocc","occ"), variable=str_replace(variable,"Oocc","occ")) %>% # Remove owner/renter from variable name
+  group_by(GEOID,variable) %>% # GroupBy GEOID and variable to manipulate each "group" separately and then combine the results
+  summarise(est=sum(est,na.rm=T)) %>% # Sum values per group (i.e. [R]occ + [Oocc]); ensure na.rm=T to handle NULLs properly
+  ungroup() %>% # Ungroup to return to the starting dataframe structure
+  spread(variable, est) # Reshape from long to wide form by extending values into their own columns
+
+# Join the new householder variables back to the "block2010" dataset
+block2010 <- block2010 %>% left_join(block2010_long_HHer, by = "GEOID")
+```
+
+Visually review the 2010 blocks in Multnomah County.
+
+```{r}
+# Note that sf is a singular object, unlike a shapefile, which contains multiple slots.
+# For instance block2010@proj4string would return the CRS if it was a shapefile
+# To view the CRS of an sf object use:
+# block2010 %>% st_crs()
+
+# Visual check of Multnomah County blocks
+# block2010 %>%
+#   filter(NAME %like% "Multnomah County") %>%
+#   mapview(.)
+```
+
+### 2000 Census Blocks
+
+Read in the 2000 census blocks, made available through PSU PRC OPFP. For details, see supporting scripts `Block90_00_data_prep\block90.R`. Rename existing variables to match 2010 blocks and calculate new variables.
+
+```{r}
+# Read in the 2000 blocks
+block2000 <- readRDS("./Data/block00.rds")
+
+# Review column names
+# colnames(block2000)
+
+# Rename specific fields
+block2000 <- block2000 %>% rename(
+  GEOID = GEOID00,
+  gq_pop = pop_gq,
+  tot_hu = hu,
+  m_85_plus = m_85plus,
+  f_85_plus = f_85plus)
+
+# Replace "to" with underscores
+block2000 <- block2000 %>% rename_at(vars(contains("to")), 
+list(~str_replace(., "to", "_")))
+
+# Replace "and" with underscores
+block2000 <- block2000 %>% rename_at(vars(contains("and")), 
+list(~str_replace(., "and", "_")))
+
+# Rename specific fields
+block2000 <- block2000 %>% rename(
+  tot_pop = "_talpop",
+  tot_hu = "_t_hu",
+  m_00_04 = m_0_4,
+  m_05_09 = m_5_9,
+  f_00_04 = f_0_4,
+  f_05_09 = f_5_9)
+
+# Calculate new fields
+block2000$hh_pop <- (block2000$tot_pop - block2000$gq_pop)
+
+block2000$m_15_19 <- (block2000$m_15_17 + block2000$m_18_19)
+block2000$m_20_24 <- (block2000$m_20 + block2000$m_21 + block2000$m_22_24)
+block2000$m_60_64 <- (block2000$m_60_61 + block2000$m_62_64)
+block2000$m_65_69 <- (block2000$m_65_66 + block2000$m_67_69)
+
+block2000$f_15_19 <- (block2000$f_15_17 + block2000$f_18_19)
+block2000$f_20_24 <- (block2000$f_20 + block2000$f_21 + block2000$f_22_24)
+block2000$f_60_64 <- (block2000$f_60_61 + block2000$f_62_64)
+block2000$f_65_69 <- (block2000$f_65_66 + block2000$f_67_69)
+
+block2000$tot_00_17 <- (block2000$m_00_04 + block2000$m_05_09 + block2000$m_10_14 + block2000$m_15_17 + block2000$f_00_04 + block2000$f_05_09 + block2000$f_10_14 + block2000$f_15_17)
+
+block2000$tot_18_64 <- (block2000$m_18_19 + block2000$m_20_24 + block2000$m_25_29 + block2000$m_30_34 + block2000$m_35_39 + block2000$m_40_44 + block2000$m_45_49 + block2000$m_50_54 + block2000$m_55_59 + block2000$m_60_64 + block2000$f_18_19 + block2000$f_20_24 + block2000$f_25_29 + block2000$f_30_34 + block2000$f_35_39 + block2000$f_40_44 + block2000$f_45_49 + block2000$f_50_54 + block2000$f_55_59 + block2000$f_60_64)
+
+block2000$tot_65_plus <- (block2000$m_65_69 + block2000$m_70_74 + block2000$m_75_79 + block2000$m_80_84 + block2000$m_85_plus + block2000$f_65_69 + block2000$f_70_74 + block2000$f_75_79 + block2000$f_80_84 + block2000$f_85_plus)
+
+# Review revised column names
+# colnames(block2000)
+```
+
+### 1990 Census Blocks
+
+Read in the 1990 census blocks, made available through PSU PRC OPFP. For details, see supporting scripts `Block90_00_data_prep\block90.R`. Rename existing variables to match 2010 blocks and calculate new variables.
+
+```{r}
+block1990 <- readRDS("./Data/block90.rds")
+
+# Review column  names
+# colnames(block1990)
+
+# Add underscores to male and female variables
+block1990 <- block1990 %>% rename_at(vars(starts_with("m")), 
+list(~str_replace(., "m", "m_")))
+
+block1990 <- block1990 %>% rename_at(vars(starts_with("f")), 
+list(~str_replace(., "f", "f_")))
+
+# Rename specific variables
+block1990 <- block1990 %>% rename(
+  gq_pop = gq,
+  hu_occ = hh,
+  f_85_plus = "f_85+",
+  m_85_plus = "m_85+",
+  tot_00_17 = Under18,
+  tot_18_64 = X18_64,
+  tot_65_plus = Over64)
+
+# Calculate new variables
+block1990$tot_hu <- as.integer(block1990$tot_hu)
+block1990$hu_occ <- as.integer(block1990$hu_occ)
+block1990$hu_vac <- (block1990$tot_hu - block1990$hu_occ)
+
+# Review revised column names
+# colnames(block1990)
+```
+
+### Spatial Analysis
+
+  As previously mentioned, the OPFP's unit of analysis for population forecasts are UGBs, and thus, census block-level data must be allocated and aggregated to these larger areas. Specifically, the decennial block-level data is spatially allocated to the most recent UGBs areas (i.e. nearest to forecast launch year) using Geographic Information Systems (Population Research Center 2019, 5). A simple centroid allocation method is employed, in which the central point of a block polygon is derived and spatially joined to a UGB or unincorporated county area. For blocks that border or intersect a UGBs, the OPFP spatially reviews the areas to ensure that at least 50% of housing units are located within the UGB before assigning it to an urban area (personal communication with Nick Chun, 2019).
+
+Read in the 2018 Urban Growth Boundaries (UGBs), downloaded from Oregon Spatial Data Library, and retrieve all Oregon Counties via the `tigris` package.
+
+```{r results='hide'}
+UGB2018 <- st_read("./Data/shapefiles/UGB_2018.shp")
+
+# county <- tigris::counties("OR")
+
+# Export as an RDS file
+# saveRDS(county,"./Data/county.rds")
+
+# Read in the "county.rds" RDS dataset already retrieved via `tigris`
+county <- readRDS("./Data/county.rds")
+```
+
+Spatial join the 2010 blocks and 2018 UGBs.
+
+```{r warning=FALSE, results='hide', message=FALSE, class.source = 'fold-show'}
+# Convert 2010 blocks to centroids
+block2010_pts <- st_centroid(block2010)
+
+# Spatial join 2010 block points and 2018 UGBs; maintain all block points
+block2010 <- st_join(block2010_pts, UGB2018 %>%
+                            select(InstName) %>% # Keep only the UGB name variable
+                            st_transform(st_crs(block2010_pts)), left = T) %>% # Use the blocks PCS
+  st_set_geometry(NULL) %>% 
+  select(GEOID, InstName) %>%
+  left_join(block2010, . , by = "GEOID")
+
+# Spatial join 2010 blocks and counties
+block2010 <- block2010 %>% st_join(county %>% select(county=NAME) %>% st_transform(st_crs(block2010)))
+```
+
+Repeat for 2000 and 1990 blocks, spatially joining to 2018 UGBs. Export the prepared/cleansed 1990, 2000, and 2010 blocks datasets in wide format.
+
+```{r warning=FALSE, results='hide', message=FALSE}
+# Convert 2000 blocks to centroids
+block2000_pts <- st_centroid(block2000)
+
+# Spatial join 2000 block points and 2018 UGBs; maintain all block points
+block2000 <- st_join(block2000_pts, UGB2018 %>% select(InstName) %>% st_transform(st_crs(block2000_pts)), left = T) %>% st_set_geometry(NULL) %>% select(GEOID, InstName) %>%  left_join(block2000, . , by = "GEOID")
+
+# Spatial join 2000 blocks and counties
+block2000 <- block2000 %>% st_join(county %>% select(county=NAME) %>% st_transform(st_crs(block2000)))
+
+# Convert 1990 blocks to centroids
+block1990_pts <- st_centroid(block1990)
+
+# Spatial join 1990 block points and 2018 UGBs; maintain all blocks
+block1990 <- st_join(block1990_pts, UGB2018 %>% select(InstName) %>% st_transform(st_crs(block1990_pts)), left = T) %>% st_set_geometry(NULL) %>% select(GEOID, InstName) %>% left_join(block1990, . , by = "GEOID")
+
+# Spatial join 1990 blocks and counties
+block1990 <- block1990 %>% st_join(county %>% select(county=NAME) %>% st_transform(st_crs(block1990)))
+
+# Export RDS files and shapefiles
+# saveRDS(block2010,"./Data/block2010.rds")
+# saveRDS(block2000,"./Data/block2000.rds")
+# saveRDS(block1990,"./Data/block1990.rds")
+```
+
+### Reshape Datasets
+
+Reshape the 2010 blocks datasets from wide to long form, and compute total population by age group variables.
+
+```{r warning=FALSE, class.source = 'fold-show'}
+# Reshape the 2010 blocks datasets from wide to long form
+block2010_long <- block2010 %>% st_set_geometry(NULL) %>% # Remove the shape geometry
+  mutate(InstName= case_when(is.na(InstName)~paste0(county,"-unincorporated"),T~InstName )) %>% # Compute a new field; case_when() to vectorise multiple if_else() statements; if UGB name is NULL, then paste0 (i.e. no spaces) the county name plus "-unincorporated" (e.g. Baker-unincorporated), else UGB name
+  select(GEOID, InstName, county, 1:length(.), -NAME) %>% # Reorder columns so that GEOID, InstName, county are in the first positions and then all remaining variables thereafter; remove the block NAME variable
+  mutate_all(.,funs(replace(.,is.na(.),0))) %>%  # Apply a function to all variables; replace all NA/NULL values with 0
+  gather(variable,est,4:length(.)) %>% # gather() takes multiple columns and collapses then into key-value pairs; groupby GEOID, InstName, county; all fields (variables) in positions 4 and thereafter are transposed and their values are present in the new est field
+  mutate(est=as.numeric(est,na.rm=T)) %>% # set the est variable to be numeric and ensure NULLs are handled with na.rm=T
+  mutate(year=2010) # Add year variable
+
+# Combine (sum) the male and female age group variables
+block2010_long_mf <- block2010_long %>%
+  filter(str_detect(variable, "^m_") | str_detect(variable, "^f_")) %>% # Filter all male and female age group variables
+  mutate(variable=str_replace(variable,"m_","tot_"), variable=str_replace(variable,"f_","tot_")) %>% # Remove male/female from variable name
+  group_by(GEOID, InstName, county, year, variable) %>% #GroupBy key columns
+  summarise(est=sum(est,na.rm=T)) %>% # Sum values per group (i.e. [m] + [f]); ensure na.rm=T to handle NULLs properly
+  ungroup() %>% # Ungroup to return to the starting dataframe structure
+  filter(variable != "tot_tot") # Remove the sum of m_tot and f_tot
+
+# Join the new householder variables back to the "block2010" dataset
+block2010_long <- rbind(block2010_long, block2010_long_mf)
+```
+
+Repeat for the 2000 and 1990 blocks.
+
+```{r}
+# Reshape the 2000 blocks datasets from wide to long form
+block2000_long <- block2000 %>% st_set_geometry(NULL) %>% 
+  mutate(InstName= case_when(is.na(InstName)~paste0(county,"-unincorporated"),T~InstName )) %>% 
+  select(GEOID, InstName, county, 1:length(.)) %>% 
+  mutate_all(.,funs(replace(.,is.na(.),0))) %>% 
+  gather(variable,est,4:length(.)) %>% 
+  mutate(est=as.numeric(est,na.rm=T)) %>% 
+  mutate(year=2000)
+
+# Combine (sum) the male and female age group variables
+block2000_long_mf <- block2000_long %>%
+  filter(str_detect(variable, "^m_") | str_detect(variable, "^f_")) %>% 
+  mutate(variable=str_replace(variable,"m_","tot_"), variable=str_replace(variable,"f_","tot_")) %>% 
+  group_by(GEOID, InstName, county, year, variable) %>% 
+  summarise(est=sum(est,na.rm=T)) %>% 
+  ungroup()
+
+# Join the new householder variables back to the "block2000" dataset
+block2000_long <- rbind(block2000_long, block2000_long_mf)
+
+# Reshape the 1990 blocks datasets from wide to long form
+block1990_long <- block1990 %>% st_set_geometry(NULL) %>% 
+  mutate(InstName= case_when(is.na(InstName)~paste0(county,"-unincorporated"),T~InstName )) %>% 
+  select(GEOID, InstName, county, 1:length(.)) %>% 
+  mutate_all(.,funs(replace(.,is.na(.),0))) %>% 
+  gather(variable,est,4:length(.)) %>% 
+  mutate(est=as.numeric(est,na.rm=T)) %>% 
+  mutate(year=1990)
+
+# Combine (sum) the male and female age group variables
+block1990_long_mf <- block1990_long %>%
+  filter(str_detect(variable, "^m_") | str_detect(variable, "^f_")) %>% 
+  mutate(variable=str_replace(variable,"m_","tot_"), variable=str_replace(variable,"f_","tot_")) %>% 
+  group_by(GEOID, InstName, county, year, variable) %>% 
+  summarise(est=sum(est,na.rm=T)) %>% 
+  ungroup()
+
+# Join the new householder variables back to the "block1990" dataset
+block1990_long <- rbind(block1990_long, block1990_long_mf)
+```
+
+Union the 1990, 2000, and 2010 blocks long form datasets, and export each of the blocks datasets in long format.
+
+```{r}
+ blockAll_long <- rbind(block1990_long, block2000_long, block2010_long)
+
+# Export RDS files
+# saveRDS(block2010_long,"./Data/block2010_long.rds")
+# saveRDS(block2000_long,"./Data/block2000_long.rds")
+# saveRDS(block1990_long,"./Data/block1990_long.rds")
+# saveRDS(blockAll_long,"./Data/blockAll_long.rds")
+```
+
+## UGB Aggregation
+
+Aggregate 2010, 2000, and 1990 block data to UGBs.
+
+```{r class.source = 'fold-show'}
+# Collapse 2010 block data to UGB, summing values
+UGB2010_long <- block2010_long %>%
+  group_by(InstName, county, year, variable) %>% # GroupBy key columns, omitting GEOID
+  summarise(est=sum(est,na.rm=T)) %>% # Sum all block variable values per UGB
+  ungroup() # Ungroup to remove grouping functionality
+
+# Collapse 2000 block data to UGB, summing values
+UGB2000_long <- block2000_long %>%
+  group_by(InstName, county, year, variable) %>% 
+  summarise(est=sum(est,na.rm=T)) %>% 
+  ungroup()
+
+# Collapse 1990 block data to UGB, summing values
+UGB1990_long <- block1990_long %>%
+  group_by(InstName, county, year, variable) %>% 
+  summarise(est=sum(est,na.rm=T)) %>% 
+  ungroup()
+```
+
+Calculate 2010 pseudo-headship rates per UGB (pseudo due to dividing by total population rather than household population).
+
+```{r class.source = 'fold-show'}
+# Create wide format dataframe with total population (per age group) and householder variables
+UGB2010_wide_Hship <- UGB2010_long %>%
+  filter(str_detect(variable, "tot_") | str_detect(variable, "HHer_occ_")) %>% # Filter all total and householder variables
+  spread(variable, est) # Reshape from long to wide form by extending values into their own columns
+
+# Calculate pseudo-headship rates
+UGB2010_wide_Hship$Hship_15_24 <- (UGB2010_wide_Hship$HHer_occ_15_24 / (UGB2010_wide_Hship$tot_15_19 + UGB2010_wide_Hship$tot_20_24))
+UGB2010_wide_Hship$Hship_25_34 <- (UGB2010_wide_Hship$HHer_occ_25_34 / (UGB2010_wide_Hship$tot_25_29 + UGB2010_wide_Hship$tot_30_34))
+UGB2010_wide_Hship$Hship_35_44 <- (UGB2010_wide_Hship$HHer_occ_35_44 / (UGB2010_wide_Hship$tot_35_39 + UGB2010_wide_Hship$tot_40_44))
+UGB2010_wide_Hship$Hship_45_54 <- (UGB2010_wide_Hship$HHer_occ_45_54 / (UGB2010_wide_Hship$tot_45_49 + UGB2010_wide_Hship$tot_50_54))
+UGB2010_wide_Hship$Hship_55_59 <- (UGB2010_wide_Hship$HHer_occ_55_59 / UGB2010_wide_Hship$tot_55_59)
+UGB2010_wide_Hship$Hship_60_64 <- (UGB2010_wide_Hship$HHer_occ_60_64 / UGB2010_wide_Hship$tot_60_64)
+UGB2010_wide_Hship$Hship_65_74 <- (UGB2010_wide_Hship$HHer_occ_65_74 / (UGB2010_wide_Hship$tot_65_69 + UGB2010_wide_Hship$tot_70_74))
+UGB2010_wide_Hship$Hship_75_84 <- (UGB2010_wide_Hship$HHer_occ_75_84 / (UGB2010_wide_Hship$tot_75_79 + UGB2010_wide_Hship$tot_80_84))
+UGB2010_wide_Hship$Hship_85_plus <- (UGB2010_wide_Hship$HHer_occ_85_plus / UGB2010_wide_Hship$tot_85_plus)
+
+UGB2010_wide_Hship <- UGB2010_wide_Hship %>%
+  select(InstName, county, year, contains("Hship")) %>% # Select key and headship columns
+  gather(variable,est,4:length(.)) # Reshape from wide to long form by creating key-value pairs for the headship variables
+
+# Union the headship variables/estimates to the UGB2010 long dataset
+UGB2010_long <- rbind(UGB2010_long, UGB2010_wide_Hship)
+```
+
+Union the 1990, 2000, and 2010 UGB long form datasets, and export each of the UGB datasets in long format.
+
+```{r}
+UGBAll_long <- rbind(UGB1990_long, UGB2000_long, UGB2010_long)
+
+# Export RDS files
+# saveRDS(UGB2010_long,"./Data/UGB2010_long.rds")
+# saveRDS(UGB2000_long,"./Data/UGB2000_long.rds")
+# saveRDS(UGB1990_long,"./Data/UGB1990_long.rds")
+# saveRDS(UGBAll_long,"./Data/UGBAll_long.rds")
+```
+
+## CCR Model
+
+  A cohort change ratio (CCR) model is a relatively simple method of projecting future populations using age-specific populations counts from two censuses. Once target-year population projections are prepared, age-specific number of households can be projected by multiplying the age-specific population projections by pseudo age-specific headship rates. The following code chunk aggregates the necessary UGB population and household variables to Oregon totals for 2010, calculates pseudo-headship rates for Oregon, and prepares the data for use within a CCR model. The CCR model is constructed in MS Excel to best accommodate the lagged nature of the data, specifically those equations handling cohort survival over time.
+
+Prepare data for use in the Cohort Change Ratio (CCR) Model.
+
+```{r class.source = 'fold-show'}
+# Aggregate the UGB male, female, and group quarter populations to Oregon totals per year
+Oregon_ccr_export <- UGBAll_long %>% 
+  filter(!InstName %like% "-uninc") %>% # Remove unincorporated areas
+  group_by(year, variable) %>% # GroupBy year and variable, collapsing UGBs to Oregon totals
+  summarise(est = sum(est, na.rm = T)) %>% # Sum variable values per year
+  ungroup() %>% 
+  filter(variable %like% "m_|f_|gq_") %>% # Keep male, female, and group quarters observations
+  spread(year, est) # Reshape to wide format with columns per year
+
+# Aggregate the UGB total population and householders to Oregon totals for 2010
+Oregon_Hship <- UGBAll_long %>% 
+  filter(!InstName %like% "-uninc") %>% # Remove unincorporated areas
+  filter(year == 2010, variable %like% "tot_|_occ_", !variable %in% c("HHer_occ_tot","tot_hu","tot_pop")) %>% # Retrieve 2010 variables for calculating headship rates
+  group_by(variable) %>%  # GroupBy variable, collapsing UGBs to Oregon totals
+  summarise(est = sum(est, na.rm = T)) %>% # Sum variable values
+  spread(variable, est) # Reshape to wide format 
+
+# Calculate pseudo-headship rates for Oregon
+Oregon_Hship$Hship_15_24 <- (Oregon_Hship$HHer_occ_15_24 / (Oregon_Hship$tot_15_19 + Oregon_Hship$tot_20_24))
+Oregon_Hship$Hship_25_34 <- (Oregon_Hship$HHer_occ_25_34 / (Oregon_Hship$tot_25_29 + Oregon_Hship$tot_30_34))
+Oregon_Hship$Hship_35_44 <- (Oregon_Hship$HHer_occ_35_44 / (Oregon_Hship$tot_35_39 + Oregon_Hship$tot_40_44))
+Oregon_Hship$Hship_45_54 <- (Oregon_Hship$HHer_occ_45_54 / (Oregon_Hship$tot_45_49 + Oregon_Hship$tot_50_54))
+Oregon_Hship$Hship_55_59 <- (Oregon_Hship$HHer_occ_55_59 / Oregon_Hship$tot_55_59)
+Oregon_Hship$Hship_60_64 <- (Oregon_Hship$HHer_occ_60_64 / Oregon_Hship$tot_60_64)
+Oregon_Hship$Hship_65_74 <- (Oregon_Hship$HHer_occ_65_74 / (Oregon_Hship$tot_65_69 + Oregon_Hship$tot_70_74))
+Oregon_Hship$Hship_75_84 <- (Oregon_Hship$HHer_occ_75_84 / (Oregon_Hship$tot_75_79 + Oregon_Hship$tot_80_84))
+Oregon_Hship$Hship_85_plus <- (Oregon_Hship$HHer_occ_85_plus / Oregon_Hship$tot_85_plus)
+
+# Reshape and filter Oregon headship rates object to match CCR export object's schema
+Oregon_Hship <- Oregon_Hship %>% 
+  gather(variable, `2010`, 1:length(.)) %>% # Reshape to long form with row per variable and 2010 column of values
+  mutate(`1990` = NA, `2000` = NA) %>% # Create null 1990 and 2000 columns for unioning to CCR export object
+  filter(variable %like% "Hship") # Filter to keep only headship rates
+
+# Add Oregon headship rates to the CCR export object
+Oregon_ccr_export <- rbind(Oregon_ccr_export, Oregon_Hship)
+
+# One-time export as Excel file
+# write.xlsx(Oregon_ccr_export, "./Data/Oregon_ccr_export.xlsx")
+```
+
+The first step within the CCR model is to generate population projections for 2020 using age-specific population data from the 2000 and 2010 censuses. The male and female age-specific values are summed to compute total population per age groups. 10-year cohort change ratios are then calculated for the 10-14 through 85+ age groups by dividing the 2010 launch year population of a given cohort by the 2000 base year population of the preceding 10-year cohort (e.g. 2010 20-24 age cohorts population divided by 2000 10-14 age cohort population). For the 0-4 age group, use of a child adult ratio (CAR) is employed by dividing the 0-4 age group population by the sum of the 20-34 age groups' population. For the 5-9 age group, the CAR value is equal to the 0-4 age group population divided by the sum of the 25-39 age groups' population. 2020 projections are then calculated for the 10-14 through 85+ age groups by multiplying the launch year's preceding 10-year age group value by the change ratio (e.g. 2020 age 10-14 projection equals 2010 age 0-4 population multiplied by the 0-4 to 10-14 change ratio). To generate projections for the 0-4 age group, the sum of the male and female child-bearing age groups [20-34] is multiples by the respective CAR value. Similarly, to generate projections for the 5-10 age group, the sum of the male and female child-bearing age groups [25-39] is multiplied by the respective CAR value.
+
+<img src="http://web.pdx.edu/~abrasch/USP521/CCR_Step1.PNG" />
+
+The second step in the CCR model includes the calculation of total population per 10-year age groups by simply summing the 5-year age group values. The total number of households can then be calculated for the 2010 launch year and 2020 forecast target year by multiplying the 10-year age-specific populations by the 2010 pseudo age-specific headship rates. Note that the latter values are "pseudo" due to deriving them by dividing the number of householders by the total population rather than household population.
+
+<img src="http://web.pdx.edu/~abrasch/USP521/CCR_Step2.PNG" />
+
+The third step is to calculate PPH estimates for the 2010 launch year and 2010 forecast target year. To do so, total population values are derived by summing all age group populations, followed by the subtraction of the group quarters population and division by the total number of households. The ratio of 10-year total population change is also calculated within this step for eventual use within the multiple regression model.
+
+<img src="http://web.pdx.edu/~abrasch/USP521/CCR_Step3.PNG" />
+
+Lastly, the fourth step calculates the remaining independent variables for use within the multiple regression model. Child-aged population (0-19) is calculated by summing the populations of the age 0-19 age group, and the child-share is derived by dividing the child-aged population by the total population. The 10-year change ratio of the child share of the population is then calculated by subtracting the 2010 child share from the 2020 child share and multiplying by one hundred. The same calculations are performed for the 65 and over age groups.
+
+<img src="http://web.pdx.edu/~abrasch/USP521/CCR_Step4.PNG" />
+
+## Regression Model
+
+  Predictive models have proven extremely useful across multiple disciplines for estimating relationships between phenomena and projecting future outcomes, especially for metrics that are impractical to measure. Linear regression describes the relationship between a dependent variable (also referred to as a response) and one or more independent variables (also referred to as predictors). Specifically, ordinary least squares (OLS) regression helps quantify the influence of independent variables on the dependent variable by minimizing the sum of square differences between the observed and predicted values. The purpose of this analysis is to use multiple OLS regression to examine the relationship between PPH and three potential predictors: child-age (0-17) share of a population, elderly-aged (65+) share of a population, and total population. Specifically, this analysis is interested in the change of these variables over time, between the 2000 and 2010 decennial censuses; therefore, the variable represent ratios of change over the 10-year period (i.e. 10% increase in total population, rather than addition of 1,500 inhabitants). As discussed in the literature review, prior research indicates many additional variables determine PPH. Considering that this analysis is being conducted to contribute to established methods and models used by the OPFP, only the three aforementioned variables were included for two main reasons. First, these variables are products of the cohort-component model (CC), which is used to generate population projections for UGBs over 8,000 inhabitants, making these variables available in every geographical area of analysis. Secondly, these variables are easily understood by stakeholders, such as city officials, and they illustrate the connection between the CC/CCR model and the HU model.
+
+  The null hypothesis for this study is that PPH and the aforementioned independent variables are not related. Therefore, the alternative hypothesis is that the 10-year change of PPH is, indeed, related to 10-year change of the child-age and elderly-age shares of the population and the ratio of population change between decennial censuses. To test this hypothesis, the prepared population and housing data per UGB were used to calculate additional model variables, particularly change over time (2000 to 2010), which were subsequently used to conduct exploratory analysis and construct simple and multiple regression models. The following code chunks detail each step of these processes and present the results, which are then discussed in the consecutive section.
+
+Calculate model variables (e.g. PPH).
+
+```{r class.source = 'fold-show'}
+# Select necessary variables and reshape from long to wide format
+UGBAll_wide_input <- UGBAll_long %>% 
+  filter(variable %like% "gq_pop|hh_|hu_|tot_pop|tot_hu|00_17|65_plus") %>% # Filter necessary variables
+  mutate(variable=paste(variable,year,sep = "_")) %>% # Create new columns names, adding year suffix
+  select(-year) %>% # Remove the year column
+  spread(variable,est) # Reshape to wide format
+
+# Calculate PPH, occupancy rate, child (age 0-17) share of population, elderly (65+) share of of population
+UGBAll_wide_input <- UGBAll_wide_input %>%
+  mutate(pph_2010 = hh_pop_2010 / hu_occ_2010, pph_2000 = hh_pop_2000 / hu_occ_2000, pph_1990 = hh_pop_1990 / hu_occ_1990, 
+         occ_2010 = 1- (hu_vac_2010 / tot_hu_2010), occ_2000 = 1- (hu_vac_2000 / tot_hu_2000), occ_1990 = 1- (hu_vac_1990 / tot_hu_1990),
+         child_2010 = tot_00_17_2010 / tot_pop_2010, child_2000 = tot_00_17_2000 / tot_pop_2000, child_1990 = tot_00_17_1990 / tot_pop_1990,
+         eld_2010 = tot_65_plus_2010 / tot_pop_2010, eld_2000 = tot_65_plus_2000 / tot_pop_2000, eld_1990 = tot_65_plus_1990 / tot_pop_1990) %>% 
+  select(InstName, county, starts_with("pph"), starts_with("occ_"), starts_with("child"), starts_with("eld"), starts_with("tot_pop")) # Select the primary variables to keep
+
+# Calculate change over time, from 2000 to 2010
+UGBAll_wide_input <- UGBAll_wide_input %>% mutate(pph_0010 = pph_2010 - pph_2000, 
+                                                  occ_0010 = occ_2010 - occ_2000, 
+                                                  child_0010 = (child_2010 - child_2000)*100, # Multiply by 100
+                                                  eld_0010 = (eld_2010 - eld_2000)*100, # Multiply by 100
+                                                  pop_0010 = ((tot_pop_2010 - tot_pop_2000) / tot_pop_2000)*100) # Multiply by 100
+```
+
+Conduct exploratory analysis to assess whether there may be a relationship between the predictor and response variables.
+
+```{r warning=FALSE, class.source = 'fold-show'}
+ggpairs(data = UGBAll_wide_input, columns = c("pop_0010", "child_0010", "eld_0010", "pph_0010"), title = "Population Data")
+```
+
+The resulting correlation coefficients assist in assessing whether relationships exist. The 0.713 correlation coefficient for PPH and the child-age share of the population indicates that the two variables are likely related. Based on the -0.407 correlation coefficient, there may also be a relationship between PPH and the elderly-age share of the population, but it is most certainly a weaker one.
+
+Construct simple and multiple linear regression models.
+
+```{r class.source = 'fold-show'}
+# Population change
+UGB_lm_pop_0010 <- lm(pph_0010 ~ pop_0010, data = UGBAll_wide_input)
+
+# Child share of population
+UGB_lm_child_0010 <- lm(pph_0010 ~ child_0010, data = UGBAll_wide_input)
+
+# Elderly share of population
+UGB_lm_eld_0010 <- lm(pph_0010 ~ eld_0010, data = UGBAll_wide_input)
+
+# Population change, child share, and elderly share in multiple regression model
+UGB_lm_pop_child_eld_0010 <- lm(pph_0010 ~ child_0010 + eld_0010 + pop_0010, data = UGBAll_wide_input)
+summary(UGB_lm_pop_child_eld_0010)
+
+# Population change, child share, and elderly share in multiple regression model in urban areas
+# This is the preferred model
+UGB_lm_pop_child_eld_0010_urb <- lm(pph_0010 ~ child_0010 + eld_0010 + pop_0010, data = UGBAll_wide_input %>% filter(!InstName %like% "-uninc"))
+summary(UGB_lm_pop_child_eld_0010_urb)
+
+# Check multicollinearity by calculating Variance Inflation Factors (VIF) for the preferred model.
+#Rule of thumb: in terms of level of acceptablility of multicollinearity, under 10 is liberal, under 5 is conservative, under 4 is strict.
+car::vif(UGB_lm_pop_child_eld_0010_urb)
+```
+
+Using the preferred regression model, predict 2010 and 2020 PPH for Oregon using the results of the CCR model.
+
+```{r class.source = 'fold-show'}
+# Aggregate UGBs (omitting unincorporated areas) to Oregon
+# Select necessary variables and reshape from long to wide format
+Oregon_wide <- UGBAll_long %>% 
+  filter(!InstName %like% "-uninc") %>% # Remove unincorporated areas
+  filter(variable %like% "hh_pop|hu_occ") %>% # Filter necessary variables
+  mutate(variable=paste(variable,year,sep = "_")) %>% # Create new columns names, adding year suffix
+  spread(variable,est) %>% # Reshape to wide format
+  summarise(hh_pop_2010=sum(hh_pop_2010,na.rm=T), hu_occ_2010=sum(hu_occ_2010,na.rm=T), hh_pop_2000=sum(hh_pop_2000,na.rm=T), hu_occ_2000=sum(hu_occ_2000,na.rm=T), hh_pop_1990=sum(hh_pop_1990,na.rm=T), hu_occ_1990=sum(hu_occ_1990,na.rm=T)) %>% # Collapse UGB values to Oregon-wide
+  mutate(pph_2010 = hh_pop_2010 / hu_occ_2010, pph_2000 = hh_pop_2000 / hu_occ_2000, pph_1990 = hh_pop_1990 / hu_occ_1990) # Calculate Oregon PPH
+
+# Use the CCR 2010 values and 2020 projections of the three independent variables to predict Oregon-wide 2010 to 2020 change in PPH
+# Note that the model variable names reflect 2000-2010, but the values represent may represent any 10-year time period.
+# Also note that due to the CCR model structure, values for the 0-17 age cohort are unavailable. Instead, the 0-19 age cohort values are used as a proxy of the child share of a populaion.
+pph_0010 <- predict(UGB_lm_pop_child_eld_0010_urb, data.frame(child_0010 = -1.763314, eld_0010 = 0.323648, pop_0010 = 0.160626))
+pph_1020 <- predict(UGB_lm_pop_child_eld_0010_urb, data.frame(child_0010 = -1.182966, eld_0010 = 3.979440, pop_0010 = 0.150065))
+
+# Add the predicted 2000-2010 and 2010-2020 PPH change value to Oregon-wide dataset
+pph_0010 <- as.data.frame(pph_0010, col.name="pph_0010")
+pph_1020 <- as.data.frame(pph_1020, col.name="pph_1020")
+Oregon_wide <- cbind(Oregon_wide, pph_0010, pph_1020)
+
+# Calculate 2010 PPH estimate and 2020 PPH projection
+Oregon_wide <- Oregon_wide %>% mutate(pph_2010_predict = pph_2000 + pph_0010, pph_2020_predict = pph_2010 + pph_1020) %>% select(pph_1990, pph_2000, pph_2010, pph_2010_predict, pph_2020_predict)
+
+# Oregon-wide 1990 through 2020 PPH values and forecasts
+head(Oregon_wide)
+```
+
+# Results and Discussion
+
+  The results of the single regression models confirm the strength of the relationships investigated in the exploratory analysis. The change of the child-aged share of a population between 2000 and 2010, alone, explained 50.8% (R-squared) of the variance. In comparison, the change of the elderly-aged share of a population between 2000 and 2010, alone, explained much less of the variance, with an R-squared value of 16.6%. Lastly, the ratio of population change between 2000 and 2010, alone, only explained 8.2% (R-squared) of the variance.
+
+  A multiple regression model, containing all three aforementioned independent variables, was conducted, resulting in an improvement upon the single regression models, explaining 52.3% (Adjusted R-squared) of the variance. Note that since R-squared values always increases as more variables are included in a model, Adjusted R-squared was used to assess the multiple regression models to account for the increased number of independent variables. The child-aged share of the population and the elderly-aged share of the population variables were statistically significant at the 95 percent level of confidence, with `p-values` of < 0.0000000000000002 and 0.00181, respectively. The ratio of population change between 2000 and 2010 is not significant; however, theory suggests that it should remain in the model, at the very least as evidence of its inclusion in initial assessment. For the two significant variables, the signs of the regression coefficients are in the expected direction, in that PPH has a positive relationship with the proportion of the child-share of a population and a negative relationship with the proportion of the elderly-share of a population.
+
+  Since the focus of this study is on Oregon UGBs (i.e. incorporated areas), a second multiple regression (henceforth, the preferred model) was conducted using the same variables, but with unincorporated areas removed from the dataset. This omission decreased the Adjusted R-squared value slightly to 51.4%, while the child-aged share of the population and elderly-aged share of the population variables remain significant with a `p-values` of < 0.0000000000000002 and 0.0065, respectively. To check for multicollinearity, variance inflation factors were calculated. The low values for each independent variable (1.28 child share, 1.17 elderly share, and 1.13 ratio of population change) within the preferred model represent an acceptable level of multicollinearity (i.e., the variables are independent of one another).
+
+  As a key component of the HU method, increases in PPH result in larger populations and decreases in PPH result in smaller populations. Using PPH as a proxy for population, the results of the preferred multiple regression model help to explain how changes in age structure influence the total population for a given area. The statistically significant results of the preferred model match preliminary expectations and result in rejection of the null hypothesis. Based on the model results, for every one percent decrease in the child-aged share of the population over a 10-year period, there is, on average, a 0.0266 decrease in PPH. In comparison, for every one percent increase in the elderly-aged share of the population over a 10-year period, there is, on average, a 0.0054 decrease in PPH. These results are consistent with findings in relevant literature, particularly the research completed by Deng, Wu, and Wang (2010); Smith, Nogle, and Cody (2002); and Kimpel and Lowe (2007). Specifically, Deng, Wu, and Wang also determined that PPH has a significant and positive relationship with the percentage of young population (age 0-17) and a significant but negative relationship with the percentage of elder population (age 65+) (2010, 5682). Similarly, Smith, Nogle, and Cody found that increases in births per household and school enrollees per household tend to raise PPH values, and increases in Medicare enrollees per household tend to lower PPH values (Smith, Nogle, and Cody 2002, 703). Lastly, local research in Washington State found that the change in persons 65 and over (as a share of total population) was statistically significant at the 95 percent level of confidence and had the expected negative sign, causing a decrease in PPH (Kimpel and Lowe 2007, 4).
+
+  For comparison purposes, the three independent variables for 2010 and 2020 were extracted from the CCR model and used within the regression model to make a prediction of PPH for those years. Based on the preferred regression model, PPH was predicted to be 2.4389 in 2010, which is 0.0139 greater than the actual 2010 PPH value of 2.4528. Thus, the mean absolute percentage error (MAPE)—representing the average error when the direction of error is ignored—is 0.57%. As noted by Smith, Nogle, and Cody, MAPE is a measure of precision, or how close the estimates were to the actual values, regardless of whether they were too high or too low. (2002, 703). Despite this slight over-prediction, the regression model performed as anticipated, producing a value lower than the 2000 PPH value of 2.4733, due to a decrease in the child-age share of the population and increase in the elderly-share of the population between 2000 and 2010. 
+
+  For 2020, the preferred regression model predicted a PPH value of 2.4142, while the CCR model projected 2.3850 PPH, a difference of 0.0292,. Both models produced anticipated results, in that a decrease in PPH was expected between 2010 and 2020 due to the expected continuation of age pyramid restructuring, wherein the child-share of the population is decreasing while the elderly-share is increasing. Discrepancies between the models are fully expected for a number of reasons; chief among them being that the models use different variables to derive PPH. The CCR model relies on age-specific population, launch year (2010) pseudo headship rates, and group quarters population, whereas the regression model uses variables derived from the change of the population's age structure over time. Additionally, one categorical difference between the methods is that the child cohort is represented by ages 0-17 in the regression model and 0-19 in the CCR model.
+
+# Future Research
+
+  The results of this research indicate that a regression approach to estimating PPH values would be a valuable asset to the OPFP, especially for the purposes of explaining the impacts of decreasing fertility rates and aging upon population forecasts. Of course, numerous opportunities to improve and extend the regression analysis exist. One important limitation to note is that each UGB is treated as an individual observation within the preferred regression model, thereby masking neighborhood effects. In other words, the results do not incorporate the influence of nearby places. For instance, a UGB that is a suburb of a large, urban area may be influenced by this geographical relationship. A suburban UGB that is well-connected to the urban core by public transit might adopt characteristics of the urban area (e.g. lower fertility rates), whereas a more traditional, low-density suburban UGB may have a higher average PPH due to its affordability in comparison to the urban core. To address this limitation, county-level values could be incorporated to produce a fixed-effect multiple regression model. Another, more simplistic alternative may be the addition of a dummy variable, such as county name, into the existing multiple regression model.
+
+  Of the potential improvements to the regression approach, one of the most influential is the future investigation and incorporation of more variables. As mentioned, a number of geographic, demographic, and housing variables are expected to influence PPH trends. A few of the most readily available variables that should be assessed include changes in fertility rates, marital status, living arrangements, racial/ethnic composition, and educational attainment. 
+Although Smith and colleagues determined that nonwhite births as a proportion of total births and nonwhite deaths as a proportion of total deaths to be statistically insignificant in its study of Florida counties and sub-county areas (2002, 700), these variables warrant further investigation in different study areas. When, or if, better data becomes available at sub-state levels, information on housing structures (e.g., square footage, number of bedrooms, etc.) and geographic relationships like distances to certain land use types (e.g., commercial and recreational areas) should be included in future research. Another potentially important improvement is the estimation of PPH separately for different types of housing structures (e.g., single family, multifamily, and mobile home). For instance, in Washington State between 1990 and 2000, the average PPH for single-family housing declined at a much slower rate compared to the prior decade, while larger increases in PPH for multi-unit structures and mobile homes/special housing were witnessed over the same time period (Kimpel and Lowe 2007, 1-2).
+
+  Lastly, more collaboration among practitioners of the HU method is encouraged, in order to continue research and evaluation of regression models on a variety of populations. Many state agencies that use the HU method are also researching potential improvements. For instance, Washington State's OFM planned to evaluate occupancy rates and PPH to develop methods to adjust those components to avoid large population estimate errors (Zhao and Gardner 2011, 10). Sharing and applying developed models could potentially lead to a better understanding of regional variation in PPH and occupancy rates.
+
+# Conclusion
+
+  The Oregon Population Forecast Program (OPFP) uses the housing unit (HU) method to forecast future population for small Oregon cities (less than 8,000 inhabitants) because the approach has proven to perform particularly well at the subcounty level. The data required by the HU method—housing units, occupancy rate, and persons per household (PPH)—are readily available for most subcounty areas and tend to be more reliable than the data required by other methods (e.g., cohort-component model). However, one of the challenges to producing accurate forecasts for small areas with the HU method is quantifying and accounting for the impact of local and regional factors on PPH and occupancy rates. In an attempt to better capture the inherent variation in the components of the HU method across time and space, this study investigated the use of regression analysis to estimate PPH. Studies have shown that regression analysis can perform well in forecasting PPH based on geographic, demographic, and housing information. Moreover, regression techniques are particularly useful when PPH values are changing rapidly, because they are based on variables that capture the impact of change over time (Smith and Cody 2013, 236). A multiple regression model was constructed to examine the relationship between PPH and three potential predictors: child-age (0-17) share of a population, elderly-aged (65+) share of a population, and total population. Specifically, this analysis utilized the change of these variables over time, between the 2000 and 2010 decennial censuses.
+
+  Over the course of the last two decades, average household size in Oregon has remained fairly static, with 2.4563 PPH in 1990 increasing to 2.4733 PPH in 2000, followed by a decline back to 2.4528 PPH in 2010. This trend of decreasing PPH starting between 2000 and 2010 makes sense, in that this was the period in which the restructuring of the state's age distribution began. In general, the statewide fertility rate has been declining across Oregon—a trend that is expected to continue into the near future. As the fertility rate declines so does the child-age share of the population. Based on the results of this study's regression analysis, for every one percent decrease in the child-aged share of the population over a 10-year period, there is, on average, a 0.0266 decrease in PPH. Oregon's age structure will also change based on the aging of the baby-boomer generation, which will contribute to a larger elderly share of the population. The regression model results show that for every one percent increase in the elderly-aged share of the population over a 10-year period, there is, on average, a 0.0054 decrease in PPH. Therefore, the prediction produced by the regression model of a decrease in average household size from 2.4528 PPH in 2010 to 2.4142 PPH in 2020 is expected based on the assessment of current and expected demographic trajectories.
+
+  In general, this study supplied the PRC OPFP with methods to project PPH based on statistical relationships, which provide a means of communicating how aging, household formation, and declining fertility impact population forecasts to county and city stakeholders and the general public. The results show that regression analysis may be a useful tool to add to the suite of methods currently used by OPFP, especially to investigate local variation in inputs of the HU method for forecasting future population. Despite the positive results of using regression analysis to predict PPH, it is important to remember that results of any forecasting method are largely dependent on decisions made by practitioners. As this study has shown and prior research has determined, there is no "one-size fits all" approach to population forecasting techniques (Swanson 2009, 54), and certainly not the HU method. Local and regional variation does and will continue to occur. Regression analysis may aid in predicting this variation, but scrutiny should be applied when evaluating data quality, determining which independent variables to include in regression analysis, considering previous trends, and incorporating input from local or regional planners.
+
+# References
+
+Bradbury, Mason, M. Nils Peterson, and Jianguo Liu. 2014. “Long-Term Dynamics of Household Size and Their Environmental Implications.” Population and Environment 36 (1): 73–84. https://doi.org/10.1007/s11111-014-0203-6.
+
+Cai, Qian and Rebecca Tippett. "Housing-Unit Method in Comparison: The Virginia Case." In Emerging Techniques in Applied Demography. Hoque, Nazrul and Potter, Lloyd B., eds. 2014. Dordrecht: Springer. ProQuest Ebook Central. http://ebookcentral.proquest.com/lib/psu/detail.action?docID=1968616.
+
+Chi, Guangqing. 2009. “Can Knowledge Improve Population Forecasts at Subcounty Levels?” Demography 46 (2): 405–27. https://doi.org/10.1353/dem.0.0059.
+
+Deng, Chengbin, Changshan Wu, and Le Wang. 2010. “Improving the Housing-Unit Method for Small-Area Population Estimation Using Remote-Sensing and GIS Information.” International Journal of Remote Sensing 31 (21): 5673–88. https://doi.org/10.1080/01431161.2010.496806.
+
+Deng, Chengbin, and Changshan Wu. 2013. “Improving Small-Area Population Estimation: An Integrated Geographic and Demographic Approach.” Annals of the Association of American Geographers 103 (5): 1123–41. https://doi.org/10.1080/00045608.2013.770364.
+
+Hauer, Mathew E., Jason M. Evans, and Clark R. Alexander. 2015. “Sea-Level Rise and Sub-County Population Projections in Coastal Georgia.” Population and Environment 37 (1): 44–62. https://doi.org/10.1007/s11111-015-0233-8.
+
+Hoque, Nazrul. 2012. “Evaluation of Small Area Population Estimates Produced by Housing Unit, Ratio-Correlation and Component Method II Compared to 2000 Census Counts." Canadian Studies in Population 39 (1–2): 91–108. https://journals.library.ualberta.ca/csp/index.php/csp/article/view/17838.
+
+Jiang, Leiwen, and Brian C. O’Neill. 2007. “Impacts of Demographic Trends on US Household Size and Structure.” Population and Development Review 33 (3): 567–91. https://www.jstor.org/stable/25434636.
+
+Kimpel, Thomas, and Theresa Lowe. 2007. “Estimating Household Size for Use in Population Estimates.” In Population Estimates & Projections, Research Brief No. 47. Washington State Office of Financial Management. https://www.researchgate.net/publication/237280266_Estimating_Household_Size_for_Use_in_Population_Estimates.
+
+Population Research Center, College of Urban and Public Affairs, Portland State University. 2019. "Methods and Data for Developing Coordinated Population Forecasts." https://www.pdx.edu/prc/sites/www.pdx.edu.prc/files/Forecast_Methods_2019_Updated_0.pdf.
+
+Smith, Stanley K., and Bart B. Lewis. 1980. “Some New Techniques for Applying the Housing Unit Method of Local Population Estimation.” Demography 17 (3): 323–39. https://doi.org/10.2307/2061106.
+
+Smith, Stanley K., and Marylou Mandell. 1984. “A Comparison of Population Estimation Methods: Housing Unit Versus Component II, Ratio Correlation, and Administrative Records.” Journal of the American Statistical Association 79 (386): 282–89. https://doi.org/10.2307/2288261.
+
+Smith, Stanley K. 1986. “A Review and Evaluation of the Housing Unit Method of Population Estimation.” Journal of the American Statistical Association 81 (394): 287–96. https://doi.org/10.2307/2289216.
+
+Smith, Stanley K., June Nogle, and Scott Cody. 2002. “A Regression Approach to Estimating the Average Number of Persons per Household.” Demography 39 (4): 697–712. https://doi.org/10.1353/dem.2002.0040.
+
+Smith, Stanley K., and Scott Cody. 2013. “Making the Housing Unit Method Work: An Evaluation of 2010 Population Estimates in Florida.” Population Research and Policy Review 32 (2): 221–42. https://doi.org/10.1007/s11113-012-9265-2.
+
+Starsinic, Donald E., and Meyer Zitter. 1968. “Accuracy of the Housing Unit Method in Preparing Population Estimates for Cities.” Demography 5 (1): 475–84. https://doi.org/10.2307/2060224.
+
+Swanson, David A., and George Hough. 2012. “An Evaluation of Persons per Household (PPH) Estimates Generated by the American Community Survey: A Demographic Perspective” Population Research and Policy Review, 31 (2), 235-266. https://escholarship.org/uc/item/3sw577fd.
+
+Washington State Office of Financial Management, Forecasting Division. 2012. “Small Area Estimate Program User Guide.” Mohrman, Mike, and Tom Kimpel, contributors. https://www.ofm.wa.gov/sites/default/files/public/legacy/pop/smallarea/docs/saep_user_guide.pdf.
+
+Zhao, Yi, and Erica Gardner. 2011. “P2011-1: Evaluation of OFM’s 2010 Population Estimates.” In Population Estimates & Projections, Research Brief No. 63. Washington State Office of Financial Management. https://www.ofm.wa.gov/sites/default/files/public/legacy/researchbriefs/2011/brief063.pdf.
+
+
+```{r warning=FALSE, error=FALSE, results='hide', echo=FALSE, message=FALSE}
+# Remove all intermediate objects from the R environment.
+remove(block1990_long_mf)
+remove(block1990_pts)
+remove(block2000_long_mf)
+remove(block2000_pts)
+remove(block2010_attributes)
+remove(block2010_long_HHer)
+remove(block2010_long_mf)
+remove(block2010_pts)
+remove(block2010_shp)
+remove(county)
+remove(UGB2010_wide_Hship)
+remove(UGB_lm_child_0010)
+remove(UGB_lm_eld_0010)
+remove(UGB_lm_pop_0010)
+remove(UGB_lm_pop_child_eld_0010)
+remove(Oregon_Hship)
+remove(pph_1020)
+```
+
+----
